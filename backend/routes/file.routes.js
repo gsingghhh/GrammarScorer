@@ -1,12 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import { Router } from 'express';
-import multer from 'multer';
+import { fileURLToPath } from 'url'; // For handling ES Module path
 import { authUser } from '../middlewares/authUser.js';
 import { transcribeAudio } from '../controllers/file.controller.js';
 
-// Ensure the uploads directory exists
+// Get the __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const uploadDir = path.join(__dirname, '../uploads');
+
+// Ensure the uploads directory exists
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
