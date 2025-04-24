@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Router } from 'express';
 import { fileURLToPath } from 'url'; // For handling ES Module path
+import multer from 'multer';  // Correctly import multer
 import { authUser } from '../middlewares/authUser.js';
 import { transcribeAudio } from '../controllers/file.controller.js';
 
