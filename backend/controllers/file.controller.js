@@ -1,16 +1,8 @@
-import path from "path";
-import fs from "fs/promises";
-import { exec } from "child_process";
-import { fileURLToPath } from "url";
-import axios from "axios";
-import dotenv from "dotenv";
-import TRANSCRIPTION from "../models/transcriptionSchema.js";
+import axios from 'axios';
+import fs from 'fs/promises';
+import path from 'path';
 
-
-dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const API_KEY = process.env.ASSEMBLYAI_API_KEY;  // You should have this key in your .env file
 
 export const transcribeAudio = async (req, res) => {
   try {
@@ -23,82 +15,90 @@ export const transcribeAudio = async (req, res) => {
     const uploadsDir = path.join(__dirname, "..", "uploads");
     const filePath = path.join(uploadsDir, file.filename);
 
-    exec(
-      `whisper "${filePath}" --model base --output_format txt --output_dir "${uploadsDir}"`,
-      async (error) => {
-        if (error) {
-          console.error("Whisper error:", error);
-          return res.status(500).json({
-            message: "Transcription failed",
-            error: error.message,
-          });
-        }
+    // Upload the file to AssemblyAI
+    const uploadResponse = await axios.post('https://api.assemblyai.com/v2/upload', fs.createReadStream(filePath), {
+      headers: {
+        'authorization': API_KEY,
+      },
+    });
 
-        const transcriptPath = path.join(
-          uploadsDir,
-          file.filename.replace(path.extname(file.filename), ".txt")
-        );
+    const audioUrl = uploadResponse.data.upload_url;
 
-        try {
-          const transcription = await fs.readFile(transcriptPath, "utf-8");
+    // Request transcription
+    const transcribeResponse = await axios.post('https://api.assemblyai.com/v2/transcript', 
+      { audio_url: audioUrl }, 
+      { headers: { 'authorization': API_KEY } });
 
-          // Grammar check using LanguageTool API
-          const response = await axios.post(
-            "https://api.languagetoolplus.com/v2/check",
-            new URLSearchParams({
-              text: transcription,
-              language: "en-US",
-            }),
-            {
-              headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-            }
-          );
+    const transcriptionId = transcribeResponse.data.id;
 
-          const grammarResults = response.data;
+    // Poll for the transcription status
+    let statusResponse;
+    let transcriptionText = "";
+    while (true) {
+      statusResponse = await axios.get(`https://api.assemblyai.com/v2/transcript/${transcriptionId}`, {
+        headers: { 'authorization': API_KEY }
+      });
 
-          const totalIssues = grammarResults.matches.length;
-          const totalWords = transcription.split(/\s+/).length;
-          const score = ((totalWords - totalIssues) / totalWords) * 100;
+      if (statusResponse.data.status === 'completed') {
+        transcriptionText = statusResponse.data.text;
+        break;
+      } else if (statusResponse.data.status === 'failed') {
+        return res.status(500).json({ message: 'Transcription failed' });
+      }
 
-          // Basic Suggestion Engine (rule-based fallback)
-          const suggestions = grammarResults.matches
-            .slice(0, 5)
-            .map((match, index) => {
-              return `Suggestion ${index + 1}: "${match.context.text}" → ${match.message}`;
-            })
-            .join("\n");
+      // Wait for a few seconds before checking the status again
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
 
-          await TRANSCRIPTION.create({
-            userId: req.user._id,
-            transcription,
-            grammar: grammarResults.matches,
-            score: parseFloat(score.toFixed(2)),
-            suggestions
-          })
+    // Now perform the grammar check using LanguageTool API (you can keep that part the same)
 
-          await fs.unlink(filePath)
-          await fs.unlink(transcriptPath)
-
-          return res.status(200).json({
-            message:
-              "Transcription, grammar check, and suggestions generated successfully!",
-            transcription,
-            grammar: grammarResults.matches,
-            score: score.toFixed(2),
-            suggestions,
-          });
-        } catch (err) {
-          console.error("Error reading transcript or checking grammar:", err);
-          return res.status(500).json({
-            message: "Error processing transcription or grammar check",
-          });
-        }
+    const grammarCheckResponse = await axios.post(
+      "https://api.languagetoolplus.com/v2/check",
+      new URLSearchParams({
+        text: transcriptionText,
+        language: "en-US",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
       }
     );
+
+    const grammarResults = grammarCheckResponse.data;
+
+    const totalIssues = grammarResults.matches.length;
+    const totalWords = transcriptionText.split(/\s+/).length;
+    const score = ((totalWords - totalIssues) / totalWords) * 100;
+
+    const suggestions = grammarResults.matches
+      .slice(0, 5)
+      .map((match, index) => {
+        return `Suggestion ${index + 1}: "${match.context.text}" → ${match.message}`;
+      })
+      .join("\n");
+
+    // Store the transcription and results in the database
+    await TRANSCRIPTION.create({
+      userId: req.user._id,
+      transcription: transcriptionText,
+      grammar: grammarResults.matches,
+      score: parseFloat(score.toFixed(2)),
+      suggestions
+    });
+
+    await fs.unlink(filePath);  // Clean up uploaded file
+
+    return res.status(200).json({
+      message:
+        "Transcription, grammar check, and suggestions generated successfully!",
+      transcription: transcriptionText,
+      grammar: grammarResults.matches,
+      score: score.toFixed(2),
+      suggestions,
+    });
   } catch (error) {
-    console.error("Controller error:", error);
+    console.error("Error during transcription or grammar check:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
