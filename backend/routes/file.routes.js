@@ -17,7 +17,7 @@ const uploadDir = path.join(path.dirname(import.meta.url), '../uploads');
 
 // Ensure the uploads directory exists
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
+    fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
