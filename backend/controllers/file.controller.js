@@ -22,34 +22,59 @@ export const transcribeAudio = async (req, res) => {
     const file = req.file;
 
     if (!file) {
+      console.error("❌ No audio file uploaded");
       return res.status(400).json({ message: "No audio file uploaded" });
     }
 
     const filePath = path.join(__dirname, "..", "uploads", file.filename);
+    console.log("📁 Uploaded file path:", filePath);
 
     // 🔁 OpenAI Whisper API transcription
-    const transcriptionResult = await openai.audio.transcriptions.create({
-      file: fsSync.createReadStream(filePath),
-      model: "whisper-1",
-    });
+    let transcriptionResult;
+    try {
+      console.log("🧠 Calling OpenAI Whisper API...");
+      transcriptionResult = await openai.audio.transcriptions.create({
+        file: fsSync.createReadStream(filePath),
+        model: "whisper-1",
+        response_format: "text",
+      });
+      console.log("✅ Transcription received from OpenAI");
+    } catch (err) {
+      console.error("❌ OpenAI API Error:", err.response?.data || err.message);
+      return res.status(500).json({
+        message: "Failed to transcribe audio with OpenAI",
+        error: err.response?.data || err.message,
+      });
+    }
 
-    const transcription = transcriptionResult.text;
+    const transcription = transcriptionResult;
+    console.log("📝 Transcription:", transcription.slice(0, 100) + "...");
 
     // 🧠 Grammar check using LanguageTool
-    const response = await axios.post(
-      "https://api.languagetoolplus.com/v2/check",
-      new URLSearchParams({
-        text: transcription,
-        language: "en-US",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-      }
-    );
+    let grammarResults;
+    try {
+      const grammarResponse = await axios.post(
+        "https://api.languagetoolplus.com/v2/check",
+        new URLSearchParams({
+          text: transcription,
+          language: "en-US",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+        }
+      );
+      grammarResults = grammarResponse.data;
+      console.log("✅ Grammar check completed");
+    } catch (err) {
+      console.error("❌ LanguageTool API Error:", err.message);
+      return res.status(500).json({
+        message: "Grammar check failed",
+        error: err.message,
+      });
+    }
 
-    const grammarResults = response.data;
     const totalIssues = grammarResults.matches.length;
     const totalWords = transcription.split(/\s+/).length;
     const score = ((totalWords - totalIssues) / totalWords) * 100;
@@ -71,6 +96,7 @@ export const transcribeAudio = async (req, res) => {
 
     // Clean up
     await fs.unlink(filePath);
+    console.log("🧹 Temp file deleted");
 
     return res.status(200).json({
       message: "Transcription, grammar check, and suggestions generated successfully!",
@@ -79,8 +105,12 @@ export const transcribeAudio = async (req, res) => {
       score: score.toFixed(2),
       suggestions,
     });
+
   } catch (error) {
-    console.error("Controller error:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
+    console.error("🔥 Controller caught error:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message || error,
+    });
   }
 };
