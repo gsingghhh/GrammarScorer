@@ -10,7 +10,10 @@ import { transcribeAudio } from '../controllers/file.controller.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const uploadDir = path.join(__dirname, '../uploads');
+
+// Get the current directory from the import.meta.url
+const uploadDir = path.join(path.dirname(import.meta.url), '../uploads');
+
 
 // Ensure the uploads directory exists
 if (!fs.existsSync(uploadDir)) {
